@@ -6,7 +6,7 @@ import font
 from array2d import Array2D
 
 class Screenshot:
-    char_error_limit = 10
+    char_error_limit = 4
     img_error_limit = 100
     text_accept_score = -16
     y_end = {
