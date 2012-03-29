@@ -16,6 +16,4 @@ Extract it and in a console or terminal change to the director
 
 Once that is done, cd to the mcocr directory and run
 
-> python mcocr/__init__.py /path/to/screenshot.png SCALE
-
-where 'scale' is a number between 1 and 4: small, normal, large, extra large
+> python mcocr/__init__.py /path/to/screenshot.png
