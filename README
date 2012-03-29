@@ -3,7 +3,6 @@ this on a single image.
 
 Requirements:
 
-- Screenshots Must have been taken in the normal size
 - No HD Fonts
 - PyPNG package.
 
