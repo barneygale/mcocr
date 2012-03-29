@@ -49,6 +49,7 @@ class Screenshot:
         colour_positions=dict((i, []) for i in range(0,50)) #TODO: Confirm actual max lines on screen
         totalerr = 0
         x_padding = 9000 #Minimum x padding
+        x_offsets = []
         
         #Line loop, from high y to low
         for y0 in range(img.height - self.y_end[scale] + (img.height % 2), 0, -9*scale):
@@ -117,6 +118,7 @@ class Screenshot:
                     #Handle any accumulated spaces up to this point.
                     if len(line) == 0:
                         x_padding = min(x_padding, space_count)
+                        x_offsets.append(space_count)
                     line += " " * (space_count/3)
                     space_count = 0
                     
@@ -174,11 +176,8 @@ class Screenshot:
             lines.append(line)
             
         #Remove latent space-padding from x chatbox margin
-        
-        x_padding = x_padding/3
-        if x_padding != 0:
-            for i, l in enumerate(lines):
-                lines[i] = lines[i][x_padding:]
+        for i, l in enumerate(lines):
+            lines[i] = lines[i][(x_offsets[i]-x_padding)/3:]
         
         colour_positions = [[(j[0]-x_padding, font.colourize_fg(j[1])) for j in colour_positions[i]] for i in range(len(lines)-1, -1, -1)]
         return totalerr, colour_positions, "\n".join(lines[::-1])
