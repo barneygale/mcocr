@@ -2,6 +2,7 @@ import png, array
 import zipfile
 import sys
 import re
+import os
 
 SCANOVER = 10
 
@@ -13,7 +14,11 @@ fg_colours = [array.array('B', colourize_fg(i)) for i in range(16)]
 
 error_limit = 10
 
-
+if sys.platform == 'win32':
+	minecraft_path = os.environ['APPDATA']
+else:
+	minecraft_path = os.path.expanduser("~")
+minecraft_path = os.path.join(minecraft_path, ".minecraft")
 
 class Array2D:
     def __init__(self, w, h, element_width):
@@ -70,7 +75,7 @@ class Array2D:
 def get_glyphs():
     glyphs = dict([(i, []) for i in range(0,10)])
 
-    zf = zipfile.ZipFile('/home/barney/.minecraft/bin/minecraft.jar')
+    zf = zipfile.ZipFile(os.path.join(minecraft_path, 'bin', 'minecraft.jar'))
     charset = zf.read('font.txt').decode("UTF8").split('\r\n')[1:]
     charset = ' '*32 + ''.join(charset)
     reader = png.Reader(bytes=zf.read('font/default.png'))
@@ -116,33 +121,6 @@ def get_glyphs():
             o += 1
     
     return glyphs
-
-def debug_img(img, name):                 
-    #print "Writing debug img..."
-    output = array.array('B', (0,)*(img.width*img.height*3))
-    index_1 = 0
-    index_2 = 0
-    for el in img.iter_pixels():
-        #print el
-        if el & 1:
-            output[index_1  ] = 255
-            output[index_1+1] = 255
-            output[index_1+2] = 255
-        if el & 2:
-            output[index_1  ] = 128
-            output[index_1+1] = 128
-            output[index_1+2] = 128
-        
-        index_1 += 3
-    
-    f = open(name, 'wb')
-    writer = png.Writer(img.width, img.height, alpha=False)
-    writer.write_array(f, output)
-    f.close()
-    #print "Done."
-
-                    
-    
     
 def char_match(a,b,curbest):
     errors = 0
@@ -154,8 +132,6 @@ def char_match(a,b,curbest):
             errors += 1
             if errors >= curbest or errors >= error_limit:
                 return errors
-            
-    
     return errors
 
 def get_line_width(line):
@@ -192,34 +168,7 @@ def get_line_width(line):
                 return False, chat_width
             i+=1
         
-        return True, width
-
-def fix_linebreaks(text):
-    output = ""
-    lines = text.split("\n")
-    for j in range(len(lines)-1):
-        line = lines[j] + lines[j+1][0]
-    
-        #PART ONE: examine the first part to see if it wraps
-        more = False
-        if len(line) > chat_length:
-            more = True
-        else:
-            width = 0
-            i = 0
-            while i < len(line):
-                index = characters.find(line[i])
-                width += character_widths[index+32]
-                if width >= chat_width:
-                    more = True
-                    break
-                i+=1
-        output += lines[j]
-        if not more:
-            output += "\n"
-    output += lines[len(lines)-1]
-    return output
-        
+        return True, width  
 
 def ocr(filename, glyphs):
     f = open(filename, 'rb')
@@ -252,7 +201,6 @@ def ocr(filename, glyphs):
                 for y1 in range(0,18,2):
                     
                     #Check the 2x2 area is contiguous
-             
                     colour = img.get_pixel(x0, y0+y1)
                     contiguous = True
                     for i in range(1,4):
@@ -318,8 +266,7 @@ def ocr(filename, glyphs):
             break
         lines.append(line)
     
-    print "Total errors: %d" % totalerr
-    return "\n".join(lines[::-1])
+    return totalerr, "\n".join(lines[::-1])
     
                             
                         
@@ -340,7 +287,6 @@ def censor_coords(text):
     newline_pos_index = 0
     
     for match in re.finditer(pattern, stripped):
-        #print match.group(1)
         start = match.start() + 1
         end = match.end()
         
@@ -349,7 +295,6 @@ def censor_coords(text):
         
         #If it's split over two lines...
         if newline_positions[newline_pos_index+1] < end:
-            #print "At row 
             #First box...
             rows[newline_pos_index].append((
                 - newline_positions[newline_pos_index] + start, #start
@@ -369,18 +314,14 @@ def censor_coords(text):
    
 
 g = get_glyphs()
-print g[6][72][0]
-text = ocr(sys.argv[1], g)
-#text = fix_linebreaks(text)
-#print text
+errors, text = ocr(sys.argv[1], g)
 split = text.split('\n')
-#print split
 rows = censor_coords(text)
 for y, row in rows.items():
     for box in row:
         #print box
         split[y] = split[y][:box[0]] + '#'*(box[1]-box[0]) + split[y][box[1]:]
 
-print '\n'.join(split)
+print "\n".join(split)
         
         
