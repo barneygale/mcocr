@@ -15,9 +15,9 @@ fg_colours = [array.array('B', colourize_fg(i)) for i in range(16)]
 error_limit = 10
 
 if sys.platform == 'win32':
-	minecraft_path = os.environ['APPDATA']
+    minecraft_path = os.environ['APPDATA']
 else:
-	minecraft_path = os.path.expanduser("~")
+    minecraft_path = os.path.expanduser("~")
 minecraft_path = os.path.join(minecraft_path, ".minecraft")
 
 class Array2D:
@@ -33,7 +33,7 @@ class Array2D:
         index = self.element_width * (x + y*self.width)
         return self.data[index:index+self.element_width]
     
-    def set_pixel(self, x, y, data):
+    def set_pixel(self, x, y, *data):
         index = self.element_width * (x + y*self.width)
         for j in range(self.element_width):
             self.data[index+j] = data[j]
@@ -41,9 +41,7 @@ class Array2D:
     def iter_pixels(self):
         for index in range(0, self.width*self.height*self.element_width, self.element_width):
             o = self.data[index:index+self.element_width]
-            #print "yielding", o[0]
             yield o[0]
-            #yield o if len(0) > 1 else o[0]
     
     def get_area(self, x, y, dx, dy):
         #Width in bytes of data
@@ -66,18 +64,32 @@ class Array2D:
         
         return out
     
-    def match_area(self, x, y, glyph):
-        #for y0 in glyph.height
-        pass
+    def contiguous(self, x, y, scale):
+        #Check if a given square, starting at x,y and ending at x+scale,y+scale is all the same colour
+        area = self.get_area(x,y,scale,scale)
+        last = area[:self.element_width]
+        for i in range(self.element_width, len(area), self.element_width):
+            j = area[i:i+self.element_width]
+            if j != last:
+                return False
+            last = j
+        return last
     def __eq__(self, other):
         return self.width == other.width and self.height == other.height and self.element_width == other.element_width and self.data == other.data 
 
 def get_glyphs():
+    #Key is character width. Value is a list of pairs: (String, Array2D)
+    #Array2D format: 1 byte per pixel, 0: no data, 1: fg data, 2: bgdata
     glyphs = dict([(i, []) for i in range(0,10)])
 
+    #Open minecraft.jar
     zf = zipfile.ZipFile(os.path.join(minecraft_path, 'bin', 'minecraft.jar'))
+    
+    #Read the character set
     charset = zf.read('font.txt').decode("UTF8").split('\r\n')[1:]
     charset = ' '*32 + ''.join(charset)
+    
+    #Read the font file
     reader = png.Reader(bytes=zf.read('font/default.png'))
     
     width, height, pixels, metadata = reader.read_flat()
@@ -113,8 +125,8 @@ def get_glyphs():
             for nx, strip in enumerate(strips):
                 for ny, pixel in enumerate(strip):
                     if pixel == 1:
-                        char.set_pixel(nx, ny, [1])     #Foreground
-                        char.set_pixel(nx+1, ny+1, [2]) #Shadow
+                        char.set_pixel(nx, ny, 1)     #Foreground
+                        char.set_pixel(nx+1, ny+1, 2) #Shadow
             
             glyphs[len(strips)+1].append((charset[o], char))
              
@@ -122,16 +134,31 @@ def get_glyphs():
     
     return glyphs
     
-def char_match(a,b,curbest):
+def char_match(a,b,xoffset,curbest):
     errors = 0
-    for i in range(0, len(a)):
-        c = a[i]
-        d = b[i]
-        if (c != 0 and d == 0) or \
-           (c == 0 and d != 0):
-            errors += 1
-            if errors >= curbest or errors >= error_limit:
-                return errors
+    #Fast check
+    if xoffset == 0 and a.width == b.width and a.height == b.height:
+        for i in range(a.width*a.height):
+            c = a.data[i]
+            d = b.data[i]
+            if (c != 0 and d == 0) or \
+               (c == 0 and d != 0):
+                errors += 1
+                if errors >= curbest or errors >= error_limit:
+                    return errors
+         
+        return errors
+
+
+    for y0 in range(a.height):
+        for x0 in range(a.width):
+            c = a.get_pixel(x0, y0)[0]
+            d = b.get_pixel(x0+xoffset, y0)[0]
+            if (c != 0 and d == 0) or \
+               (c == 0 and d != 0):
+                errors += 1
+                if errors >= curbest or errors >= error_limit:
+                    return errors
     return errors
 
 def get_line_width(line):
@@ -170,7 +197,7 @@ def get_line_width(line):
         
         return True, width  
 
-def ocr(filename, glyphs):
+def ocr(filename, glyphs, scale):
     f = open(filename, 'rb')
     reader = png.Reader(file=f)
     width, height, pixels, metadata = reader.read_flat()
@@ -182,13 +209,20 @@ def ocr(filename, glyphs):
     
     totalerr = 0
     
+    x_padding = 9000 #Minimum x padding
+    
     #Line loop, from high y to low
-    for y0 in range(img.height - 96 + (img.height % 2), 0, -18):
+    start = {
+        1:  49,
+        2:  96,
+        3:  145,
+        4:  190}
+    for y0 in range(img.height - start[scale] + (img.height % 2), 0, -9*scale):
         line = ""
-        x0 = 4
+        x0 = 0
         space_count = 0
         #X loop
-        while x0 < 640:
+        while x0 < 320*scale:
             strips = []
 
             #Character read loop
@@ -198,32 +232,27 @@ def ocr(filename, glyphs):
                 strip = array.array('B', (0,)*9)
                 
                 #Loop over pixels in a strip, low y to high
-                for y1 in range(0,18,2):
+                for y1 in range(0,9*scale,scale):
                     
-                    #Check the 2x2 area is contiguous
-                    colour = img.get_pixel(x0, y0+y1)
-                    contiguous = True
-                    for i in range(1,4):
-                        t = img.get_pixel(x0+(i&1), y0+y1+((i&2)>>1))
-                        if t != colour:
-                            contiguous = False
-                            break
-                        colour = t
-                    if contiguous:
+                    #Check the scale*scale area is contiguous
+                    colour = img.contiguous(x0, y0+y1, scale)
+                    if colour:
                         #Text foreground
                         if colour in fg_colours:
                             #Does it have a shadow? (noise otherwise)
-                            if img.get_pixel(x0+2, y0+y1+2) in (bg_colours+fg_colours):
-                                strip[y1/2] = 1
+                            shadow = img.contiguous(x0+scale, y0+y1+scale, scale)
+                            if shadow in (bg_colours+fg_colours):
+                                strip[y1/scale] = 1
                                 fg_data = True
                         #Text shadow
                         if colour in bg_colours:
                             #Is there a shadow caster? (noise otherwise)
-                            if img.get_pixel(x0-2, y0+y1-2) in fg_colours:
-                                strip[y1/2] = 2
+                            caster = img.contiguous(x0-scale, y0+y1-scale, scale)
+                            if caster in fg_colours:
+                                strip[y1/scale] = 2
                                 bg_data = True
 
-                x0 += 2
+                x0 += scale
 
                 if fg_data or bg_data:
                     #We've got some character data
@@ -239,7 +268,9 @@ def ocr(filename, glyphs):
             #If we've read a character (not part of a space)...
             if len(strips) > 0:
                 #Handle any accumulated spaces up to this point.
-                line += " " * (space_count/4)
+                if len(line) == 0:
+                    x_padding = min(x_padding, space_count)
+                line += " " * (space_count/3)
                 space_count = 0
                 
                 #Write strips to an array
@@ -248,24 +279,54 @@ def ocr(filename, glyphs):
                     for ny, pixel in enumerate(strip):
                         d[nx+ny*len(strips)] = pixel
                 
-                #Try to find a character match. 
-                best = (error_limit, '')
-                for string, char in glyphs[len(strips)]:
-                    errors = char_match(char.data, d, best[0])
-                    if errors < best[0]:
-                        best = (errors, string)
-                        if errors == 0:
+                #Make an Array2D out of it
+                
+                d2d = Array2D(len(strips), 9, 1)
+                d2d.data = d
+                
+                #Try to find a character match.
+                #Note that noise, especially on small-scale images, can very occasionally cause
+                #Two or more characters to appear here.
+                
+                #Character loop
+                x2 = 0
+                while x2 < len(strips):
+                    #errors, width, character
+                    best = (error_limit, 0, '')
+                    charmatch = False
+                    #Loop over known character widths, high to low, looking for a match
+                    for i in range(len(strips)-x2, 1, -1):
+                        if not i in glyphs: continue
+                        
+                        #Loop over known characters of a given width
+                        for string, char in glyphs[i]:
+                            errors = char_match(char, d2d, x2, best[0])
+                            if errors < best[0]:
+                                best = (errors, i, string)
+                                if errors == 0:
+                                    #Perfect match!
+                                    charmatch = True
+                                    break
+                        if charmatch:
                             break
-
-                #Append the best character match to the line
-                line+=best[1]
-                totalerr+=best[0]
+                     
+                    #OK, we've got a character now!
+                    totalerr += best[0]
+                    x2 += best[1]
+                    line += best[2]
+               
         
         #Blank line? Don't bother reading any further up.
         if line == "":
             break
         lines.append(line)
+        
+    #Remove latent space-padding from x chatbox margin
     
+    x_padding = x_padding/3
+    if x_padding != 0:
+        for i, l in enumerate(lines):
+            lines[i] = lines[i][x_padding:]
     return totalerr, "\n".join(lines[::-1])
     
                             
@@ -314,14 +375,15 @@ def censor_coords(text):
    
 
 g = get_glyphs()
-errors, text = ocr(sys.argv[1], g)
+errors, text = ocr(sys.argv[1], g, int(sys.argv[2]))
 split = text.split('\n')
 rows = censor_coords(text)
 for y, row in rows.items():
     for box in row:
-        #print box
         split[y] = split[y][:box[0]] + '#'*(box[1]-box[0]) + split[y][box[1]:]
 
 print "\n".join(split)
+#print "---"
+#print "Errors: %d" % errors
         
         
