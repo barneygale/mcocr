@@ -1,0 +1,19 @@
+While this application is in progress, here are the instructions to work 
+this on a single image.
+
+Requirements:
+
+- Screenshots Must have been taken in the normal size
+- No HD Fonts
+- PyPNG package.
+
+To install the pypng package download it at: 
+http://code.google.com/p/pypng/downloads/list
+
+Extract it and in a console or terminal change to the director
+
+> python setup.py install
+
+Once that is done, cd to the mcocr directory and run
+
+> python mcocr/__init__.py /path/to/screenshot.png
