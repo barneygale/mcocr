@@ -125,8 +125,8 @@ def get_glyphs():
             for nx, strip in enumerate(strips):
                 for ny, pixel in enumerate(strip):
                     if pixel == 1:
-                        char.set_pixel(nx, ny, 1)     #Foreground
-                        char.set_pixel(nx+1, ny+1, 2) #Shadow
+                        char.set_pixel(nx, ny, 0x20)     #Foreground
+                        char.set_pixel(nx+1, ny+1, 0x30) #Shadow
             
             glyphs[len(strips)+1].append((charset[o], char))
              
@@ -136,30 +136,33 @@ def get_glyphs():
     
 def char_match(a,b,xoffset,curbest):
     errors = 0
-    #Fast check
+    colour = None
     if xoffset == 0 and a.width == b.width and a.height == b.height:
+        #print "Fast check"
         for i in range(a.width*a.height):
             c = a.data[i]
             d = b.data[i]
-            if (c != 0 and d == 0) or \
-               (c == 0 and d != 0):
+            if (c & 0x20 != d & 0x20):
                 errors += 1
                 if errors >= curbest or errors >= error_limit:
-                    return errors
-         
-        return errors
+                    return errors, colour
+            elif d & 0x30 == 0x20: #Foreground colour!
+                colour = d & 0x0F
+        return errors, colour
 
-
+    print "Slow check"
     for y0 in range(a.height):
         for x0 in range(a.width):
-            c = a.get_pixel(x0, y0)[0]
-            d = b.get_pixel(x0+xoffset, y0)[0]
-            if (c != 0 and d == 0) or \
-               (c == 0 and d != 0):
+            c = a.get_pixel(x0, y0)[0] #Character
+            d = b.get_pixel(x0+xoffset, y0)[0] #Buffer
+            if (c & 0x20 != d & 0x20):
                 errors += 1
                 if errors >= curbest or errors >= error_limit:
-                    return errors
-    return errors
+                    return errors, colour
+            elif d & 0x30 == 0x20: #Foreground colour!
+                colour = d & 0x0F
+                
+    return errors, colour
 
 def get_line_width(line):
     chat_length = 119
@@ -206,6 +209,7 @@ def ocr(filename, glyphs, scale):
     img.data = pixels
     
     lines = []
+    colour_positions=dict((i, []) for i in range(0,50)) #TODO: Confirm actual max lines on screen
     
     totalerr = 0
     
@@ -221,6 +225,7 @@ def ocr(filename, glyphs, scale):
         line = ""
         x0 = 0
         space_count = 0
+        lastcolour = None
         #X loop
         while x0 < 320*scale:
             strips = []
@@ -239,18 +244,30 @@ def ocr(filename, glyphs, scale):
                     if colour:
                         #Text foreground
                         if colour in fg_colours:
+                            colour2 = fg_colours.index(colour)
                             #Does it have a shadow? (noise otherwise)
                             shadow = img.contiguous(x0+scale, y0+y1+scale, scale)
-                            if shadow in (bg_colours+fg_colours):
-                                strip[y1/scale] = 1
-                                fg_data = True
+                            if shadow:
+                                index = -1
+                                try: index=bg_colours.index(shadow) 
+                                except:pass
+                                try: index=fg_colours.index(shadow) 
+                                except:pass
+                                if index == colour2:
+                                    strip[y1/scale] = 0x20 | colour2
+                                    fg_data = True
                         #Text shadow
                         if colour in bg_colours:
+                            colour2 = bg_colours.index(colour)
                             #Is there a shadow caster? (noise otherwise)
                             caster = img.contiguous(x0-scale, y0+y1-scale, scale)
-                            if caster in fg_colours:
-                                strip[y1/scale] = 2
-                                bg_data = True
+                            if caster:
+                                index = -1
+                                try: index=fg_colours.index(caster)
+                                except:pass
+                                if index == colour2:
+                                    strip[y1/scale] = 0x30 | colour2
+                                    bg_data = True
 
                 x0 += scale
 
@@ -267,6 +284,8 @@ def ocr(filename, glyphs, scale):
             
             #If we've read a character (not part of a space)...
             if len(strips) > 0:
+                #print "Got something!"
+                #print strips
                 #Handle any accumulated spaces up to this point.
                 if len(line) == 0:
                     x_padding = min(x_padding, space_count)
@@ -292,7 +311,7 @@ def ocr(filename, glyphs, scale):
                 x2 = 0
                 while x2 < len(strips):
                     #errors, width, character
-                    best = (error_limit, 0, '')
+                    best = (error_limit, 0, colour, '')
                     charmatch = False
                     #Loop over known character widths, high to low, looking for a match
                     for i in range(len(strips)-x2, 1, -1):
@@ -300,9 +319,9 @@ def ocr(filename, glyphs, scale):
                         
                         #Loop over known characters of a given width
                         for string, char in glyphs[i]:
-                            errors = char_match(char, d2d, x2, best[0])
+                            errors, colour = char_match(char, d2d, x2, best[0])
                             if errors < best[0]:
-                                best = (errors, i, string)
+                                best = (errors, i, colour, string)
                                 if errors == 0:
                                     #Perfect match!
                                     charmatch = True
@@ -313,7 +332,10 @@ def ocr(filename, glyphs, scale):
                     #OK, we've got a character now!
                     totalerr += best[0]
                     x2 += best[1]
-                    line += best[2]
+                    if best[2] != lastcolour:
+                        lastcolour = best[2]
+                        colour_positions[len(lines)].append((len(line), best[2]))
+                    line += best[3]
                
         
         #Blank line? Don't bother reading any further up.
@@ -327,7 +349,9 @@ def ocr(filename, glyphs, scale):
     if x_padding != 0:
         for i, l in enumerate(lines):
             lines[i] = lines[i][x_padding:]
-    return totalerr, "\n".join(lines[::-1])
+    
+    colour_positions = [[(j[0]-x_padding, j[1]) for j in colour_positions[i]] for i in range(len(lines)-1, -1, -1)]
+    return totalerr, colour_positions, "\n".join(lines[::-1])
     
                             
                         
@@ -375,7 +399,7 @@ def censor_coords(text):
    
 
 g = get_glyphs()
-errors, text = ocr(sys.argv[1], g, int(sys.argv[2]))
+errors, colour_positions, text = ocr(sys.argv[1], g, int(sys.argv[2]))
 split = text.split('\n')
 rows = censor_coords(text)
 for y, row in rows.items():
@@ -383,6 +407,7 @@ for y, row in rows.items():
         split[y] = split[y][:box[0]] + '#'*(box[1]-box[0]) + split[y][box[1]:]
 
 print "\n".join(split)
+#print "Colours: ", colour_positions
 #print "---"
 #print "Errors: %d" % errors
         
