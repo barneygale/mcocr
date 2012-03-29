@@ -42,7 +42,7 @@ class Screenshot:
             if score <= self.text_accept_score:
                 break
 
-        self.errors, self.colours, self.scale, self.text = best
+        self.errors, self.scale, self.colours, self.text = best
         
     def ocr(self, img, scale):
         lines = []
@@ -55,7 +55,7 @@ class Screenshot:
             line = ""
             x0 = 0
             space_count = 0
-            lastcolour = None
+            lastcolour = 15
             #X loop
             while x0 < 320*scale:
                 strips = []
